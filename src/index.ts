@@ -301,6 +301,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["folder"]
         }
+      },
+      {
+        name: "clear_user",
+        description: "Remove a specific user or clear the token store",
+        inputSchema: {
+          type: "object",
+          properties: {
+            folder: {
+              type: "string",
+              description: "Folder where the token file is stored"
+            },
+            file: {
+              type: "string",
+              description: "Optional token file name (default: tokens.json)"
+            },
+            user_title: {
+              type: "string",
+              description: "Specific user title to remove. If omitted, all users are removed."
+            },
+            preserveDefault: {
+              type: "boolean",
+              description: "When clearing all users, keep the 'default' user entry if it exists"
+            }
+          },
+          required: ["folder"]
+        }
       }
     ]
   };
@@ -357,6 +383,11 @@ function loadStoredTokens(folder: string): Array<{ user_title_name: string; toke
     });
     throw new Error(`Unable to read token file at ${tokenFile}`);
   }
+}
+
+function writeTokenStore(filePath: string, folder: string, tokens: any[]) {
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(filePath, JSON.stringify(tokens, null, 2), 'utf-8');
 }
 
 function saveToken(folder: string, userTitle: string, token: string) {
@@ -905,6 +936,74 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               {
                 error: 'Unable to list users from token store',
                 details: error instanceof Error ? error.message : String(error)
+              },
+              null,
+              2
+            )
+          }]
+        };
+      }
+    }
+
+    case "clear_user": {
+      const folder = String(args?.folder || '');
+      const file = args?.file ? String(args.file) : undefined;
+      const userTitle = args?.user_title ? String(args.user_title) : undefined;
+      const preserveDefault = Boolean(args?.preserveDefault);
+
+      if (!folder) {
+        throw new Error("folder is required to clear users from the token store");
+      }
+
+      try {
+        const { filePath, tokens } = readTokenStore(folder, file);
+        let updatedTokens = tokens;
+        let message: string | undefined;
+
+        if (userTitle) {
+          const remaining = tokens.filter((entry) => entry?.user_title_name !== userTitle);
+          const removedCount = tokens.length - remaining.length;
+
+          if (removedCount === 0) {
+            message = `No entry found for user_title '${userTitle}' in ${filePath}`;
+          }
+
+          updatedTokens = remaining;
+        } else {
+          updatedTokens = preserveDefault
+            ? tokens.filter((entry) => entry?.user_title_name === 'default')
+            : [];
+
+          if (preserveDefault && tokens.some((entry) => entry?.user_title_name === 'default')) {
+            message = `Cleared all users except default from ${filePath}`;
+          }
+        }
+
+        writeTokenStore(filePath, folder, updatedTokens);
+
+        const responsePayload = {
+          file: filePath,
+          users: updatedTokens,
+          message: message || (userTitle
+            ? `Removed user '${userTitle}' from ${filePath}`
+            : `Cleared token store at ${filePath}`)
+        };
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(responsePayload, null, 2)
+          }]
+        };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(
+              {
+                error: 'Unable to clear user(s) from token store',
+                details: errorMessage
               },
               null,
               2
