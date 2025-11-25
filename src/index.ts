@@ -39,7 +39,7 @@ const requestHistory: Array<{ method: string; config: HttpRequestConfig; timesta
  */
 const server = new Server(
   {
-    name: "MCP Server for API Calls",
+    name: "api-mcp",
     version: "0.1.0",
   },
   {
