@@ -279,6 +279,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["url", "jwtPath", "folder"]
         }
+      },
+      {
+        name: "list_user",
+        description: "List stored users and tokens from a token store",
+        inputSchema: {
+          type: "object",
+          properties: {
+            folder: {
+              type: "string",
+              description: "Folder where the token file is stored"
+            },
+            file: {
+              type: "string",
+              description: "Optional token file name (default: tokens.json)"
+            },
+            titlesOnly: {
+              type: "boolean",
+              description: "Return only user titles instead of full token entries"
+            }
+          },
+          required: ["folder"]
+        }
       }
     ]
   };
@@ -286,6 +308,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 function resolveTokenFilePath(folder: string): string {
   return join(folder, 'tokens.json');
+}
+
+function resolveCustomTokenPath(folder: string, file?: string): string {
+  return join(folder, file || 'tokens.json');
+}
+
+function readTokenStore(folder: string, file?: string): { filePath: string; tokens: any[] } {
+  const filePath = resolveCustomTokenPath(folder, file);
+
+  if (!existsSync(filePath)) {
+    throw new Error(`Token store not found at ${filePath}`);
+  }
+
+  try {
+    const raw = readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+
+    if (!Array.isArray(parsed)) {
+      throw new Error(`Token store at ${filePath} is not an array`);
+    }
+
+    return { filePath, tokens: parsed };
+  } catch (error) {
+    throw new Error(
+      `Unable to read token store at ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }
 
 function loadStoredTokens(folder: string): Array<{ user_title_name: string; token: string }> {
@@ -816,6 +865,53 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           text: `Stored token for user '${userTitle}' at ${resolveTokenFilePath(folder)}`
         }]
       };
+    }
+
+    case "list_user": {
+      const folder = String(args?.folder || '');
+      const file = args?.file ? String(args.file) : undefined;
+      const titlesOnly = Boolean(args?.titlesOnly);
+
+      if (!folder) {
+        throw new Error("folder is required to read the token store");
+      }
+
+      try {
+        const { filePath, tokens } = readTokenStore(folder, file);
+        const result = titlesOnly
+          ? tokens
+              .map((entry) => entry?.user_title_name)
+              .filter((title): title is string => Boolean(title))
+          : tokens;
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(
+              {
+                file: filePath,
+                users: result
+              },
+              null,
+              2
+            )
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(
+              {
+                error: 'Unable to list users from token store',
+                details: error instanceof Error ? error.message : String(error)
+              },
+              null,
+              2
+            )
+          }]
+        };
+      }
     }
 
     default:
