@@ -2,7 +2,7 @@
   "name": "@vilasone/api-mcp",
   "version": "0.1.0",
   "description": "A custom MCP server",
-  "private": true,
+  "private": false,
   "type": "module",
   "bin": {
     "api-mcp": "./build/index.js"
