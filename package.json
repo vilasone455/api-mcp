@@ -1,5 +1,5 @@
 {
-  "name": "Api MCP",
+  "name": "@vilasone/api-mcp",
   "version": "0.1.0",
   "description": "A custom MCP server",
   "private": true,
