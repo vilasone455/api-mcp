@@ -12,8 +12,8 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { readFileSync, existsSync } from 'fs';
-import { basename } from 'path';
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import { basename, join } from 'path';
 import FormData from 'form-data';
 import fetch, { RequestInit as NodeRequestInit } from 'node-fetch';
 
@@ -26,6 +26,11 @@ type HttpRequestConfig = {
   body?: any;
   requestType?: 'json' | 'form-data';
   fieldFiles?: string[];
+};
+
+type AuthConfig = {
+  folder?: string;
+  user_title?: string;
 };
 
 /**
@@ -73,6 +78,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               additionalProperties: {
                 type: "string"
               }
+            },
+            auth: {
+              type: "object",
+              description: "Optional auth configuration to load a stored bearer token",
+              properties: {
+                folder: {
+                  type: "string",
+                  description: "Folder where tokens are stored (tokens.json)"
+                },
+                user_title: {
+                  type: "string",
+                  description: "User title to pick the token from storage (default: 'default')"
+                }
+              }
             }
           },
           required: ["url"]
@@ -109,6 +128,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 type: "string"
               },
               description: "Array of field names that should be treated as files. Values can be URLs (http/https) for remote files or local file paths for local files. The system will automatically download remote files or read local files and include them as file attachments in the form data."
+            },
+            auth: {
+              type: "object",
+              description: "Optional auth configuration to load a stored bearer token",
+              properties: {
+                folder: {
+                  type: "string",
+                  description: "Folder where tokens are stored (tokens.json)"
+                },
+                user_title: {
+                  type: "string",
+                  description: "User title to pick the token from storage (default: 'default')"
+                }
+              }
             }
           },
           required: ["url"]
@@ -145,6 +178,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 type: "string"
               },
               description: "Array of field names that should be treated as files. Values can be URLs (http/https) for remote files or local file paths for local files. The system will automatically download remote files or read local files and include them as file attachments in the form data."
+            },
+            auth: {
+              type: "object",
+              description: "Optional auth configuration to load a stored bearer token",
+              properties: {
+                folder: {
+                  type: "string",
+                  description: "Folder where tokens are stored (tokens.json)"
+                },
+                user_title: {
+                  type: "string",
+                  description: "User title to pick the token from storage (default: 'default')"
+                }
+              }
             }
           },
           required: ["url"]
@@ -166,14 +213,155 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               additionalProperties: {
                 type: "string"
               }
+            },
+            auth: {
+              type: "object",
+              description: "Optional auth configuration to load a stored bearer token",
+              properties: {
+                folder: {
+                  type: "string",
+                  description: "Folder where tokens are stored (tokens.json)"
+                },
+                user_title: {
+                  type: "string",
+                  description: "User title to pick the token from storage (default: 'default')"
+                }
+              }
             }
           },
           required: ["url"]
+        }
+      },
+      {
+        name: "auth_login",
+        description: "Authenticate against an API, extract a JWT, and store it locally for reuse",
+        inputSchema: {
+          type: "object",
+          properties: {
+            url: {
+              type: "string",
+              description: "The URL to make the authentication request to"
+            },
+            headers: {
+              type: "object",
+              description: "Optional headers to include in the auth request",
+              additionalProperties: {
+                type: "string"
+              }
+            },
+            body: {
+              description: "The request body for authentication"
+            },
+            requestType: {
+              type: "string",
+              enum: ["json", "form-data"],
+              description: "Request type for the auth call"
+            },
+            fieldFiles: {
+              type: "array",
+              items: {
+                type: "string"
+              },
+              description: "Array of field names that should be treated as files for form-data auth requests"
+            },
+            jwtPath: {
+              type: "string",
+              description: "Dot-notation path to the JWT in the response (e.g., token.access_token)"
+            },
+            folder: {
+              type: "string",
+              description: "Folder where the token file will be stored"
+            },
+            user_title: {
+              type: "string",
+              description: "Optional label for the stored token (default: 'default')"
+            }
+          },
+          required: ["url", "jwtPath", "folder"]
         }
       }
     ]
   };
 });
+
+function resolveTokenFilePath(folder: string): string {
+  return join(folder, 'tokens.json');
+}
+
+function loadStoredTokens(folder: string): Array<{ user_title_name: string; token: string }> {
+  const tokenFile = resolveTokenFilePath(folder);
+  if (!existsSync(tokenFile)) {
+    return [];
+  }
+
+  try {
+    const data = readFileSync(tokenFile, 'utf-8');
+    const parsed = JSON.parse(data);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    return [];
+  } catch (error) {
+    server.sendLoggingMessage({
+      level: "error",
+      data: `Failed to read token file at ${tokenFile}: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    throw new Error(`Unable to read token file at ${tokenFile}`);
+  }
+}
+
+function saveToken(folder: string, userTitle: string, token: string) {
+  const tokenFile = resolveTokenFilePath(folder);
+  mkdirSync(folder, { recursive: true });
+
+  const tokens = loadStoredTokens(folder);
+  const existingIndex = tokens.findIndex((entry) => entry.user_title_name === userTitle);
+
+  if (existingIndex >= 0) {
+    tokens[existingIndex].token = token;
+  } else {
+    tokens.push({ user_title_name: userTitle, token });
+  }
+
+  writeFileSync(tokenFile, JSON.stringify(tokens, null, 2), 'utf-8');
+}
+
+function extractValueByPath(obj: any, path: string): any {
+  return path.split('.').reduce((current, key) => {
+    if (current && typeof current === 'object' && key in current) {
+      return current[key as keyof typeof current];
+    }
+    return undefined;
+  }, obj);
+}
+
+function applyAuthHeader(headers: Record<string, string>, auth?: AuthConfig): Record<string, string> {
+  if (!auth) {
+    return headers;
+  }
+
+  const folder = auth.folder;
+  if (!folder) {
+    throw new Error("auth.folder is required when using auth configuration");
+  }
+
+  if (headers.Authorization) {
+    return headers;
+  }
+
+  const userTitle = auth.user_title || 'default';
+  const tokens = loadStoredTokens(folder);
+  const tokenEntry = tokens.find((entry) => entry.user_title_name === userTitle);
+
+  if (!tokenEntry) {
+    throw new Error(`No token found for user_title '${userTitle}' in folder '${folder}'`);
+  }
+
+  return {
+    ...headers,
+    Authorization: `Bearer ${tokenEntry.token}`,
+  };
+}
 
 /**
  * Get file extension from content type
@@ -510,7 +698,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   switch (name) {
     case "get": {
       const url = String(args?.url || '');
-      const headers = args?.headers as Record<string, string> || {};
+      const auth = args?.auth as AuthConfig | undefined;
+      const headers = applyAuthHeader(args?.headers as Record<string, string> || {}, auth);
       
       if (!url) {
         throw new Error("URL is required for GET request");
@@ -528,7 +717,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     case "post": {
       const url = String(args?.url || '');
-      const headers = args?.headers as Record<string, string> || {};
+      const auth = args?.auth as AuthConfig | undefined;
+      const headers = applyAuthHeader(args?.headers as Record<string, string> || {}, auth);
       const body = args?.body;
       const requestType = args?.requestType as 'json' | 'form-data' || 'json';
       const fieldFiles = args?.fieldFiles as string[] || [];
@@ -549,7 +739,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     case "put": {
       const url = String(args?.url || '');
-      const headers = args?.headers as Record<string, string> || {};
+      const auth = args?.auth as AuthConfig | undefined;
+      const headers = applyAuthHeader(args?.headers as Record<string, string> || {}, auth);
       const body = args?.body;
       const requestType = args?.requestType as 'json' | 'form-data' || 'json';
       const fieldFiles = args?.fieldFiles as string[] || [];
@@ -570,7 +761,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     case "delete": {
       const url = String(args?.url || '');
-      const headers = args?.headers as Record<string, string> || {};
+      const auth = args?.auth as AuthConfig | undefined;
+      const headers = applyAuthHeader(args?.headers as Record<string, string> || {}, auth);
       
       if (!url) {
         throw new Error("URL is required for DELETE request");
@@ -582,6 +774,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         content: [{
           type: "text",
           text: `DELETE ${url}\nStatus: ${result.status} ${result.statusText}\nResponse: ${JSON.stringify(result.data, null, 2)}`
+        }]
+      };
+    }
+
+    case "auth_login": {
+      const url = String(args?.url || '');
+      const headers = args?.headers as Record<string, string> || {};
+      const body = args?.body;
+      const requestType = args?.requestType as 'json' | 'form-data' || 'json';
+      const fieldFiles = args?.fieldFiles as string[] || [];
+      const jwtPath = String(args?.jwtPath || '');
+      const folder = String(args?.folder || '');
+      const userTitle = String(args?.user_title || 'default');
+
+      if (!url) {
+        throw new Error("URL is required for auth_login");
+      }
+
+      if (!jwtPath) {
+        throw new Error("jwtPath is required to extract the token");
+      }
+
+      if (!folder) {
+        throw new Error("folder is required to store the token");
+      }
+
+      const result = await makeHttpRequest('POST', { url, headers, body, requestType, fieldFiles });
+
+      const token = extractValueByPath(result.data, jwtPath);
+
+      if (!token || typeof token !== 'string') {
+        throw new Error(`Could not find a token at path '${jwtPath}' in the response`);
+      }
+
+      saveToken(folder, userTitle, token);
+
+      return {
+        content: [{
+          type: "text",
+          text: `Stored token for user '${userTitle}' at ${resolveTokenFilePath(folder)}`
         }]
       };
     }

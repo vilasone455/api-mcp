@@ -1,6 +1,6 @@
 {
   "name": "@vilasone/api-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A custom MCP server",
   "private": false,
   "type": "module",
